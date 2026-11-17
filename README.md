@@ -1,188 +1,755 @@
-# Telecom Network \& Usage Analytics on Hadoop, Spark and Hive
+# Telecom Hadoop Platform
+### End-to-End Big Data Engineering | Hadoop · HDFS · YARN · Apache Spark · PySpark · MapReduce · Parquet
 
-A small big-data platform you build, break and tune on your own machine. Telecom data is a natural fit for big-data tools: huge volumes, dirty records, and a few very busy towers.
+An end-to-end Big Data engineering platform built to simulate telecom network usage analytics and demonstrate distributed data processing, fault-tolerant storage, data quality engineering, dimensional modelling, and performance optimisation.
 
-> \*\*100% synthetic.\*\* The generator invents all data. No real operator data, schemas, or system names are used anywhere. The README and CV line should say "simulation inspired by the telecom industry".
+The platform processes **3.03 million synthetic telecom Call Detail Records (CDRs)**, transforming raw data into validated, analytics-ready datasets using the Hadoop ecosystem.
 
-## What is verified and what is not
+It combines Hadoop Distributed File System (HDFS), YARN, Hadoop Streaming MapReduce, Apache Spark, PySpark, and Parquet to explore the engineering challenges involved in building reliable large-scale data platforms.
 
-|Part|Status|
-|-|-|
-|Data generator, Spark jobs (clean, marts, DQ), MapReduce scripts, benchmark harness|**Run and tested** (12 pytest tests pass; full pipeline ran on 1M rows, local mode, 2 cores, about 80 s end to end)|
-|Pipeline results vs generator ground truth|**Exact match**: every reject reason count, duplicates removed, and the 4 injected degraded towers found with 0 false alarms|
-|`docker/` cluster (HDFS, YARN, Spark standalone, Hive), Hive SQL|**Written but NOT run.** Syntax is valid, but I could not start Docker where this was built. Expect to fix an image tag or a setting. See Troubleshooting|
+> **Dataset:** Synthetic telecom data generated specifically for this project. It does not contain real customer or telecom operator information.
 
-## Architecture
+---
 
+## 1. Project Overview
+
+Telecommunication networks generate enormous volumes of data through voice calls, SMS messages, and mobile data sessions.
+
+Processing this data introduces several engineering challenges:
+
+- Handling millions of incoming records.
+- Detecting duplicates, missing values, and malformed records.
+- Maintaining consistency across distributed storage.
+- Processing large datasets efficiently.
+- Handling node failures while maintaining data availability.
+- Preserving historical customer information.
+- Optimising storage formats and execution strategies.
+- Ensuring data quality and reconciliation throughout the pipeline.
+
+This project addresses these challenges by implementing a Big Data processing platform using the Hadoop ecosystem.
+
+### Key Capabilities
+
+| Area | Implementation |
+|---|---|
+| Data generation | Python-based synthetic CDR generator |
+| Dataset size | 3.03 million records |
+| Distributed storage | Hadoop Distributed File System (HDFS) |
+| Resource management | YARN |
+| Distributed batch processing | Hadoop Streaming MapReduce |
+| Data processing | Apache Spark and PySpark |
+| Storage optimisation | CSV and partitioned Parquet |
+| Data modelling | Kimball Star Schema |
+| Historical tracking | Slowly Changing Dimension Type 2 |
+| Data quality | 12 automated validation checks |
+| Fault tolerance | HDFS replication and DataNode failure testing |
+| Performance engineering | File formats, partitioning, skew and shuffle optimisation |
+| Infrastructure | Docker and Docker Compose |
+| Testing | Pytest |
+
+---
+
+## 2. Results at a Glance
+
+The platform was evaluated using 3.03 million generated telecom CDR records, alongside experiments covering distributed storage, fault tolerance, batch processing, and performance optimisation.
+
+### Data Processing Results
+
+| Metric | Result |
+|---|---:|
+| Raw CDR records | 3,030,000 |
+| Successfully loaded records | 2,936,689 |
+| Rejected records | 63,944 |
+| Duplicates removed | 29,367 |
+| Data reconciliation | Exact match |
+| Data quality checks | 12/12 passed |
+| Fact table records | 2,936,689 |
+| Customer dimension records | 125,014 |
+| Network tower dimension records | 500 |
+
+### Distributed Systems Results
+
+| Metric | Result |
+|---|---:|
+| HDFS DataNodes before failure experiment | 3 |
+| Average replication factor after recovery | 2.0 |
+| MapReduce input records | 505,001 |
+| Map tasks | 2 |
+| Reduce tasks | 1 |
+| MapReduce execution time | 54.98 seconds |
+| MapReduce aggregation groups | 501 |
+
+### Performance Benchmark Results
+
+| Experiment | Result |
+|---|---:|
+| Parquet storage compared with CSV | 3.37× smaller |
+| ORC storage compared with CSV | 3.52× smaller |
+| Parquet query execution compared with CSV | 5.23× faster |
+| ORC query execution compared with CSV | 8.34× faster |
+| Partition pruning improvement | 41.3% |
+| Small-file compaction improvement | 64.0% |
+| Best tested skew strategy | Broadcast join: 0.86s |
+
+All benchmark execution times represent medians across three repetitions using Spark local execution with eight available CPU cores.
+
+### Data Reconciliation
+
+Every input record is accounted for through successful loading, rejection, or duplicate removal.
+
+```text
+Raw Records
+    =
+Successfully Loaded
+    + Rejected
+    + Duplicates Removed
 ```
-generator (Python, synthetic, defects + skew injected on purpose)
-      |
-      v
- HDFS  raw/ (CSV landing zone)
-      |
-      v   Spark: explicit schema, validate, standardise, dedupe
- HDFS  curated/cdr (Parquet, partitioned by call\_date)   curated/cdr\_rejected (reason-coded)
-      |                                                    audit/run\_log, rejects\_by\_reason
-      v   Spark: Kimball star schema, SCD Type 2 customer plan
- HDFS  marts/ fact\_usage + dim\_date, dim\_tower, dim\_plan, dim\_customer
-              agg\_region\_daily, tower\_health (anomaly flags), churn\_features
-      |
-      v
- Hive external tables + views  ->  BI tool (Power BI / Superset via HiveServer2)
 
- MapReduce (Hadoop Streaming) computes calls per tower on YARN: the classic model, for comparison.
- Quality gate: 12 automated checks -> audit/dq\_results (pipeline fails if any check fails)
+```text
+3,030,000
+    =
+2,936,689
+    + 63,944
+    + 29,367
 ```
 
-## Data model
+The resulting total matches the generator's ground-truth manifest.
 
-* **Fact:** `fact\_usage`, one row per call, SMS or data session (grain: one CDR). Partitioned by `call\_date`.
-* **Dimensions:** `dim\_date`, `dim\_tower`, `dim\_plan`, `dim\_customer`.
-* **SCD Type 2 on `dim\_customer`:** a customer who changes plan gets a new row with `valid\_from`, `valid\_to`, `is\_current`. Each call joins to the plan valid on the call date, so history does not change when a customer upgrades.
-* **Unknown member:** an unresolved key becomes `-1` and a data-quality check fails the run, instead of silently dropping the row.
+---
 
-## Part 1: run it locally (no Docker, 10 minutes)
+## 3. System Architecture
 
-Needs Java 17 or 21 and Python 3.10+.
+The platform follows a layered data engineering architecture, separating data generation, ingestion, distributed storage, transformation, dimensional modelling, and analytics.
+
+### Architecture Diagram
+
+```mermaid
+flowchart TD
+    A["Synthetic Telecom Data Generator<br/>Python"] --> B["Raw CDR Data<br/>CSV"]
+    B --> C["HDFS Distributed Storage"]
+
+    C --> D["Apache Spark / PySpark"]
+
+    D --> E["Schema Validation"]
+    E --> F["Data Cleaning & Transformation"]
+    F --> G["Deduplication & Reconciliation"]
+
+    G --> H["Curated Data<br/>Partitioned Parquet"]
+    G --> I["Rejected Data<br/>Reason Codes"]
+
+    H --> J["Dimensional Data Modelling"]
+
+    J --> K["Fact Usage"]
+    J --> L["Customer Dimension"]
+    J --> M["Tower Dimension"]
+    J --> N["Date & Plan Dimensions"]
+
+    K --> O["Analytical Data Marts"]
+    L --> O
+    M --> O
+    N --> O
+
+    O --> P["Data Quality Validation"]
+    P --> Q["Analytics-Ready Datasets"]
+
+    C --> R["Hadoop Streaming MapReduce"]
+    R --> S["YARN"]
+    S --> T["Tower Usage Aggregation"]
+
+    U["HDFS Replication"] --> C
+    V["DataNode Failure Testing"] --> U
+```
+
+### Core Components
+
+**HDFS — Distributed Storage**
+
+Stores raw and processed telecom datasets across multiple DataNodes. Replication provides fault tolerance and helps maintain data availability when a storage node fails.
+
+**YARN — Resource Management**
+
+Manages cluster resources and application execution for Hadoop workloads.
+
+**Hadoop MapReduce — Distributed Batch Processing**
+
+Executes a mapper and reducer workflow to aggregate telecom calls by network tower.
+
+**Apache Spark — Data Processing**
+
+Processes raw telecom records, performs transformations, builds dimensional models, and generates analytical datasets.
+
+**Parquet — Analytical Storage**
+
+Stores curated datasets in a columnar format to improve analytical query efficiency and reduce storage requirements.
+
+---
+
+## 4. Data Generation and Ingestion
+
+### Synthetic CDR Generation
+
+A Python-based generator creates telecom Call Detail Records representing:
+
+- Voice calls.
+- SMS messages.
+- Mobile data sessions.
+- Customer subscriptions.
+- Network towers and regions.
+- Call duration.
+- Network latency.
+- Usage volumes and associated charges.
+
+The generator deliberately introduces data defects and distribution challenges to simulate realistic data engineering scenarios.
+
+Examples include:
+
+- Missing values.
+- Invalid records.
+- Duplicate CDR identifiers.
+- Inconsistent fields.
+- Uneven network traffic distribution.
+- Degraded network tower behaviour.
+
+A ground-truth manifest is generated alongside the dataset to support downstream reconciliation and validation.
+
+### HDFS Ingestion
+
+Raw CSV datasets are uploaded into HDFS.
+
+The distributed filesystem provides:
+
+- Block-based data storage.
+- Replication across DataNodes.
+- Fault tolerance.
+- Distributed access to large datasets.
+- Monitoring of storage health and block replication.
+
+The project also includes experiments involving DataNode failure and block recovery.
+
+---
+
+## 5. Distributed Processing with Hadoop MapReduce
+
+The project implements a Hadoop Streaming MapReduce workflow to calculate call volumes per network tower.
+
+### Processing Workflow
+
+**Mapper**
+
+- Reads individual CDR records.
+- Extracts the network tower identifier.
+- Emits the tower identifier and corresponding call count.
+
+**Shuffle and Sort**
+
+- Groups records by tower identifier.
+- Transfers intermediate mapper output to the reducer.
+
+**Reducer**
+
+- Aggregates the total calls for each tower.
+- Produces the final tower-level usage summary.
+
+### Execution Results
+
+| Metric | Result |
+|---|---:|
+| Input records | 505,001 |
+| Map tasks | 2 |
+| Reduce tasks | 1 |
+| Map output records | 505,000 |
+| Aggregated output groups | 501 |
+| Execution time | 54.98 seconds |
+
+The distributed MapReduce results were compared against the local mapper/reducer implementation, with matching top tower aggregation results.
+
+This experiment demonstrates the MapReduce execution model, distributed task execution, shuffle operations, and aggregation through YARN.
+
+---
+
+## 6. Data Processing with Apache Spark
+
+Apache Spark and PySpark handle the primary transformation and analytical modelling workloads.
+
+The processing pipeline transforms raw telecom records into structured and analytics-ready datasets.
+
+### Data Cleaning and Transformation
+
+The pipeline performs:
+
+1. Schema validation and type enforcement.
+2. Field standardisation.
+3. Null and invalid-value detection.
+4. Duplicate identification and removal.
+5. Rejection of invalid records with reason codes.
+6. Curated Parquet generation.
+7. Processing audit and reconciliation.
+8. Analytical data mart generation.
+
+Invalid records are retained separately rather than silently discarded.
+
+### Idempotent Processing
+
+The pipeline supports safe reruns of the same processing scope through duplicate identification and partition overwrite.
+
+Reprocessing the same batch should not introduce additional records into the final curated output.
+
+Cross-batch deduplication of late-arriving records would require an additional transactional merge strategy.
+
+### Execution Environment
+
+The Spark jobs were successfully executed inside the Docker Spark Master container using local execution mode (`local[2]`) while reading from and writing to HDFS.
+
+This verifies Spark processing against HDFS-resident data, but is distinct from execution across a multi-worker Spark standalone cluster.
+
+---
+
+## 7. Dimensional Data Modelling
+
+The processed telecom data is transformed into a Kimball-style Star Schema to support analytical workloads.
+
+### Fact Table
+
+**`fact_usage`**
+
+Grain: One record per call, SMS, or data session.
+
+Contains usage-related measures and foreign keys referencing the associated dimensions.
+
+Verified record count: **2,936,689**.
+
+### Dimension Tables
+
+| Dimension | Description | Verified Records |
+|---|---|---:|
+| `dim_customer` | Customer information and historical subscription tracking | 125,014 |
+| `dim_tower` | Network tower and geographic information | 500 |
+| `dim_date` | Calendar attributes, dates, years, quarters and months | Generated |
+| `dim_plan` | Customer subscription and plan details | Generated |
+
+### Slowly Changing Dimension Type 2
+
+The `dim_customer` dimension implements Slowly Changing Dimension Type 2 (SCD Type 2) to preserve historical customer subscription information.
+
+Instead of overwriting an existing customer record when their subscription changes, a new version is created.
+
+The dimension maintains:
+
+- `valid_from`: Start date of the record's validity.
+- `valid_to`: End date of the record's validity.
+- `is_current`: Identifies the currently active version.
+
+This allows historical usage records to be associated with the customer information and subscription that were valid at the time of the activity.
+
+### Analytical Data Marts
+
+The platform also generates:
+
+| Dataset | Purpose |
+|---|---|
+| `agg_region_daily` | Daily usage aggregation by region |
+| `tower_health` | Network tower health and anomaly indicators |
+| `churn_features` | Customer-level features for potential churn analysis |
+
+The churn dataset contains analytical features and is not a trained churn prediction model.
+
+---
+
+## 8. Data Quality and Reliability
+
+Data quality is integrated into the processing pipeline to ensure that curated datasets are complete, consistent, and reliable.
+
+The platform implements 12 automated data-quality checks.
+
+### Validation Areas
+
+- Record completeness.
+- Duplicate identification.
+- Data validity.
+- Referential integrity.
+- Dimension key validation.
+- SCD Type 2 interval consistency.
+- Revenue reconciliation.
+- Raw-to-curated reconciliation.
+- Analytical dataset consistency.
+
+### Rejected Records
+
+Invalid records are separated from successfully processed records and retained with rejection reasons.
+
+This provides traceability and makes it possible to investigate data-quality issues without losing the original information.
+
+### Data Reconciliation
+
+The pipeline reconciles raw, loaded, rejected, and duplicate records against the generator's ground-truth manifest.
+
+### Data Quality Gate
+
+All 12 implemented validation checks passed during the 3.03-million-record processing run.
+
+---
+
+## 9. HDFS Fault Tolerance and Recovery
+
+A key part of the project is investigating how HDFS handles storage node failures.
+
+The experiment uses multiple DataNodes and observes block replication before and after a simulated node failure.
+
+### Experiment Workflow
+
+1. Start the HDFS NameNode and three DataNodes.
+2. Upload the raw telecom dataset.
+3. Verify block distribution and replication.
+4. Simulate a DataNode failure.
+5. Monitor the failed node's detection.
+6. Observe HDFS block recovery and replication.
+7. Verify the final filesystem health.
+
+### Observed Results
+
+| Metric | Result |
+|---|---|
+| DataNodes before failure | 3 |
+| Failed DataNode | Detected as dead |
+| Failure detection | Approximately 10.5 minutes |
+| Filesystem health after recovery | HEALTHY |
+| Under-replicated blocks after recovery | 0 |
+| Average replication factor | 2.0 |
+
+The experiment demonstrates HDFS fault tolerance and its ability to maintain healthy replicated storage after a DataNode failure.
+
+---
+
+## 10. Performance Engineering and Benchmarking
+
+The platform includes a benchmarking suite designed to evaluate storage formats, partitioning strategies, small-file overhead, and join optimisation techniques.
+
+### Benchmark Environment
+
+| Parameter | Configuration |
+|---|---|
+| Dataset size | 2,936,689 rows |
+| Spark master | `local[*]` |
+| Available cores | 8 |
+| Repetitions | 3 |
+| Reported measurement | Median execution time |
+
+### 10.1 Storage Format Comparison
+
+The benchmark compares CSV, Parquet, and ORC using the same analytical operation: filtering and grouping by three of the twelve available columns.
+
+| Format | Execution Time | Storage Size | Files |
+|---|---:|---:|---:|
+| CSV | 3.92s | 338.5 MB | 4 |
+| Parquet | 0.75s | 100.4 MB | 4 |
+| ORC | 0.47s | 96.2 MB | 4 |
+
+**Key observations:**
+
+- Parquet reduced storage consumption by approximately 70.3% compared with CSV.
+- Parquet completed the tested query approximately 5.23× faster than CSV.
+- ORC achieved the lowest storage footprint and fastest execution time in this experiment.
+- ORC completed the tested query approximately 8.34× faster than CSV.
+- Both columnar formats significantly outperformed CSV for the tested analytical workload.
+
+This demonstrates the benefits of columnar storage, compression, and efficient analytical reads.
+
+### 10.2 Partition Pruning
+
+This experiment evaluates whether partitioning data by `call_date` improves query performance when filtering for a single day.
+
+The benchmark uses the same one-day filter: `2026-09-01`.
+
+| Configuration | Execution Time | Storage Size | Files |
+|---|---:|---:|---:|
+| Unpartitioned | 0.75s | 101.6 MB | 12 |
+| Partitioned by `call_date` | 0.44s | 106.6 MB | 231 |
+
+**Key observations:**
+
+- Partitioning reduced execution time from 0.75 seconds to 0.44 seconds.
+- This represents approximately a 41.3% reduction in execution time.
+- The partitioned dataset contained more files due to date-based organisation.
+- Storage increased slightly from 101.6 MB to 106.6 MB.
+
+The experiment demonstrates that partition pruning can improve selective analytical queries, although partitioning introduces additional file-management overhead.
+
+### 10.3 Small-File Problem and Compaction
+
+A common challenge in distributed data platforms is the creation of numerous small files.
+
+This experiment evaluates the impact of compacting 1,000 small files into eight larger files.
+
+| Configuration | Execution Time | Storage Size | Files |
+|---|---:|---:|---:|
+| 1,000 small files | 3.47s | 122.5 MB | 1,000 |
+| 8 compacted files | 1.25s | 108.1 MB | 8 |
+
+**Key observations:**
+
+- File count decreased from 1,000 to 8.
+- Execution time improved from 3.47 seconds to 1.25 seconds.
+- Processing time decreased by approximately 64%.
+- Storage consumption decreased by approximately 11.8%.
+
+This experiment demonstrates why file compaction is important in analytical data lakes: excessive small files increase file listing, metadata, and task scheduling overhead.
+
+### 10.4 Data Skew and Join Optimisation
+
+Data skew occurs when certain keys contain significantly more records than others, resulting in uneven data distribution across processing tasks.
+
+The benchmark deliberately introduces uneven network tower traffic, with the hottest tower accounting for 19.2% of dataset rows.
+
+Four join strategies were evaluated.
+
+| Join Strategy | Execution Time | Observation |
+|---|---:|---|
+| Sort-merge join, AQE disabled | 5.74s | Baseline |
+| Sort-merge join, AQE skew handling | 2.83s | Oversized partitions split |
+| Broadcast join | 0.86s | Small side sent to every executor |
+| Salted join (K=8), AQE disabled | 2.59s | Hot key distributed across K partitions |
+
+**Key observations:**
+
+- Broadcast join achieved the best execution time at 0.86 seconds.
+- AQE skew handling reduced sort-merge execution time by approximately 50.7%.
+- Salting reduced execution time by approximately 54.9% compared with the baseline.
+- Broadcast joins avoided shuffling the larger dataset by distributing the smaller join side.
+- Salting distributed heavily concentrated keys across eight partitions.
+
+The results demonstrate that join strategy selection and skew mitigation can significantly affect processing performance.
+
+Broadcast joins are particularly effective when one side of a join is sufficiently small to be safely replicated to the executors.
+
+### 10.5 Performance Summary
+
+| Experiment | Main Finding |
+|---|---|
+| CSV vs Parquet | Parquet was 3.37× smaller and 5.23× faster |
+| CSV vs ORC | ORC was 3.52× smaller and 8.34× faster |
+| Partition pruning | Reduced execution time by approximately 41.3% |
+| Small-file compaction | Reduced execution time by approximately 64% |
+| AQE skew handling | Improved baseline execution time by approximately 50.7% |
+| Broadcast join | Fastest tested strategy at 0.86s |
+| Join salting | Improved baseline execution time by approximately 54.9% |
+
+**Benchmark scope:** These measurements were obtained using Spark local execution (`local[*]`) with eight available CPU cores. They represent controlled local performance experiments, not multi-node distributed cluster benchmarks. Results are workload- and environment-dependent.
+
+---
+
+## 11. Technology Stack
+
+| Category | Technologies |
+|---|---|
+| Programming | Python |
+| Distributed Storage | Hadoop HDFS |
+| Resource Management | YARN |
+| Batch Processing | Hadoop MapReduce, Hadoop Streaming |
+| Distributed Data Processing | Apache Spark, PySpark |
+| Storage Formats | CSV, Parquet, ORC |
+| Data Modelling | Kimball Star Schema, SCD Type 2 |
+| Data Quality | Automated validation and reconciliation |
+| Infrastructure | Docker, Docker Compose |
+| Testing | Pytest |
+| Build Automation | Makefile |
+| Version Control | Git, GitHub |
+
+---
+
+## 12. Repository Structure
+
+```text
+telecom-hadoop-platform/
+│
+├── benchmarks/
+│   └── Performance experiments and benchmark results
+│
+├── data/
+│   └── Generated telecom datasets and manifests
+│
+├── docker/
+│   ├── docker-compose.yml
+│   └── Hadoop and Spark configurations
+│
+├── generator/
+│   └── Synthetic telecom CDR generator
+│
+├── jobs/
+│   └── Spark data processing and transformation jobs
+│
+├── sql/
+│   └── SQL scripts and analytical queries
+│
+├── tests/
+│   └── Automated pipeline tests
+│
+├── .gitignore
+├── Makefile
+├── README.md
+├── requirements.txt
+├── results.csv
+└── results.md
+```
+
+---
+
+## 13. Getting Started
+
+### Prerequisites
+
+- Python 3.10 or higher.
+- Java compatible with the selected Hadoop and Spark versions.
+- Docker.
+- Docker Compose.
+- Git.
+- Make.
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/ThejaswiniSunil/telecom-hadoop-platform.git
+
+cd telecom-hadoop-platform
+```
+
+### 2. Install Dependencies
 
 ```bash
 make install
-make data ROWS=1000000      # 12 s. Writes data/raw/... and data/manifest.json (the ground truth)
-make pipeline               # clean-cdr, marts, dq  (about 80 s on 1M rows)
-make test                   # 12 tests
-make mr-local               # the MapReduce logic as cat | map | sort | reduce
-make bench                  # performance experiments, writes benchmarks/results.md
 ```
 
-Look at `data/manifest.json` after `make data`, then at the `RECONCILIATION:` line from `make clean-cdr`. The numbers match. That is the point of the project: **every row is accounted for**.
+### 3. Generate Telecom Data
 
-## Part 2: run it on a real (mini) cluster
-
-Needs Docker with about 8 GB RAM free. Run these from the repo root.
+Generate one million records:
 
 ```bash
-cd docker \&\& docker compose up -d --build \&\& cd ..
+make data ROWS=1000000
 ```
 
-Open the UIs: NameNode `http://localhost:9870` (should show **2 live DataNodes**), YARN `http://localhost:8088`, Spark `http://localhost:8080`.
-
-**1. Generate bigger data and load it into HDFS**
+For the full dataset:
 
 ```bash
-make data ROWS=10000000
-docker compose -f docker/docker-compose.yml exec namenode hdfs dfs -mkdir -p /telecom
-docker compose -f docker/docker-compose.yml exec namenode hdfs dfs -put /data/raw /telecom/raw
-docker compose -f docker/docker-compose.yml exec namenode hdfs dfs -ls -h /telecom/raw/cdr
-docker compose -f docker/docker-compose.yml exec namenode hdfs fsck /telecom/raw/cdr -files -blocks -locations
+make data ROWS=3030000
 ```
 
-**2. Run the Spark jobs on the Spark cluster, reading and writing HDFS**
+### 4. Run the Local Processing Pipeline
 
 ```bash
-S="docker compose -f docker/docker-compose.yml exec spark-master /opt/spark/bin/spark-submit --master spark://spark-master:7077 --total-executor-cores 4 --executor-memory 1500m"
-$S /opt/jobs/spark/clean\_cdr.py   --root hdfs://namenode:8020/telecom --shuffle-partitions 32
-$S /opt/jobs/spark/build\_marts.py --root hdfs://namenode:8020/telecom --shuffle-partitions 32
-$S /opt/jobs/spark/dq\_checks.py   --root hdfs://namenode:8020/telecom
+make pipeline
 ```
 
-While a job runs, open `http://localhost:4040` and look at stages, tasks, shuffle read/write, and task-time spread.
-
-**3. MapReduce on YARN**
+### 5. Run Automated Tests
 
 ```bash
-docker compose -f docker/docker-compose.yml exec nodemanager bash -c \\
- 'hadoop jar $(find / -name "hadoop-streaming-\*.jar" 2>/dev/null | head -1) \\
-   -files /opt/mr/mapper.py,/opt/mr/reducer.py \\
-   -mapper "python3 mapper.py" -reducer "python3 reducer.py" \\
-   -input /telecom/raw/cdr -output /telecom/mr/tower\_calls'
-docker compose -f docker/docker-compose.yml exec namenode hdfs dfs -cat /telecom/mr/tower\_calls/part-\* | sort -t$'\\t' -k2,2nr | head
+make test
 ```
 
-Compare the output with `agg` results from Spark. Compare the runtime too, and note why Spark is faster (in-memory, no disk write between stages).
-
-**4. Hive**
+### 6. Start the Docker Environment
 
 ```bash
-docker compose -f docker/docker-compose.yml exec hive beeline -u jdbc:hive2://localhost:10000 -f /opt/sql/01\_ddl.sql
-docker compose -f docker/docker-compose.yml exec hive beeline -u jdbc:hive2://localhost:10000 -f /opt/sql/02\_views\_and\_queries.sql
+docker compose -f docker/docker-compose.yml up -d
 ```
 
-## Part 3: the experiments (this is what makes you credible)
+### 7. Inspect Running Containers
 
-Do each one, write down the numbers, and keep a screenshot. One sentence per experiment goes into the README and into your interview answers.
-
-|#|Experiment|How|What you learn|
-|-|-|-|-|
-|1|**Replication**|Re-put the data with `hdfs dfs -D dfs.replication=1 -put ...`, then `=2`. Compare `fsck` output and disk use|Replication costs space, buys fault tolerance|
-|2|**Kill a DataNode**|`docker compose stop datanode2`, then run `hdfs dfs -cat` on a file and re-run a Spark job. Then `start` it and watch `hdfs fsck / \| grep -i under`|Reads survive; the NameNode re-replicates blocks|
-|3|**Block size and small files**|`make bench` (small\_files), then repeat on HDFS with thousands of tiny files and look at NameNode memory/metadata and job time|Why HDFS dislikes small files and why we compact|
-|4|**File formats**|`make bench` (formats): CSV vs Parquet vs ORC, size and query time|Columnar storage, column pruning|
-|5|**Partition pruning**|`make bench` (pruning), plus `EXPLAIN` in Hive. **Run with 10M+ rows**: on 200K rows the difference is noise|Partition on a column you filter by, low cardinality|
-|6|**Skew**|`make bench` (skew). Generate with `--skew 1.5`, check the slowest tasks in the Spark UI|One hot tower makes a few tasks slow; AQE, broadcast, salting|
-|7|**Shuffle partitions**|Run `clean\_cdr.py` with `--shuffle-partitions` 4, 32, 400|Too few = big tasks and spills; too many = overhead|
-|8|**MapReduce vs Spark**|Step 3 above vs the Spark equivalent|Why Spark replaced MapReduce for most work|
-|9|**Idempotency**|Run `clean\_cdr.py` twice and check the curated row count does not change (a test covers this)|Safe re-runs|
-
-Record results in `benchmarks/results.md` (the harness writes it) and add one paragraph per surprise.
-
-## Part 4: how to talk about this project
-
-**60-second pitch**
-
-> "I built a small telecom analytics platform on Hadoop and Spark. The data is synthetic: about 10 million call records with defects injected on purpose and a few very busy towers, so the problems are realistic. Spark validates each record against an explicit schema, sends bad rows to a reason-coded reject table, removes duplicates, and writes partitioned Parquet to HDFS. Every run reconciles exactly: raw rows equal loaded plus rejected plus duplicates, and the generator's ground truth confirms it. On top I built a star schema with SCD Type 2 on customer plans, 12 automated data-quality checks, and a tower anomaly table that found all the degraded towers I planted. I also benchmarked formats, partitioning, small files, skew and replica failure, so I can say what each change did and why."
-
-**Questions this project lets you answer with evidence**
-
-* *What happens when a DataNode dies?* Experiment 2.
-* *Why Parquet?* Experiment 4 (your own size and time numbers).
-* *How do you handle skew?* Experiment 6: spot it in the Spark UI, then broadcast, AQE, or salting.
-* *How do you know the pipeline did not lose data?* The reconciliation identity and the manifest.
-* *Hadoop vs Spark?* Experiment 8.
-* *How is a late or repeated batch handled?* Partition overwrite and `dropDuplicates` on `cdr\_id` make a re-run safe. (Say "idempotent re-runs" and mean "same input, same end state".)
-
-**Be precise about these limits**
-
-* This is a **local multi-container cluster**, not a production deployment.
-* The Spark job uses **dynamic partition overwrite** (reruns rewrite the same day partitions) and the run log is append-only. Real dedup across different batches (late data arriving in later files) would need a MERGE into a table format such as Delta, Iceberg or Hudi. Say so if asked, and name it as the next step.
-* Spark runs on its **standalone** cluster here. Running Spark on YARN is a worthwhile stretch (the NodeManager image needs Python installed).
-* The anomaly rule (latency at 2x a tower's own median for 6+ hours) is a simple statistical rule on planted degradation, not a production detector. The churn table is a feature set, not a model.
-
-**Cloud mapping (shows you know where the industry is going)**
-
-|This project|Cloud equivalent|
-|-|-|
-|HDFS|S3 / ADLS Gen2 / GCS|
-|YARN|Kubernetes, or managed EMR / Dataproc / HDInsight|
-|Spark standalone|Databricks, EMR, Synapse|
-|Hive external tables + metastore|Glue Catalog, Unity Catalog|
-|Parquet partitions|Delta / Iceberg tables (add ACID, MERGE, time travel)|
-|`run\_pipeline` via Makefile|Airflow / Databricks Jobs / Azure Data Factory|
-
-**CV wording (adjust to what you actually completed)**
-
-> \*Telecom Network \& Usage Analytics Platform (synthetic data) | Hadoop, HDFS, YARN, Spark, Hive, Parquet, Docker.\* Built a Dockerized HDFS/Spark/Hive stack processing 10M+ simulated call records: explicit-schema validation, reason-coded rejects, exact row reconciliation, star schema with SCD Type 2, and 12 automated data-quality checks. Benchmarked file formats, partition pruning, small-file compaction and join skew, and tested recovery after a DataNode failure.
-
-Fill in your real numbers from the benchmark runs before using this line, and only list what you ran.
-
-## Troubleshooting
-
-* **A container exits immediately:** `docker compose logs <service>`. The most common cause is not enough memory. Lower `yarn.nodemanager.resource.memory-mb` in `docker/hadoop.env` and the Spark worker `--memory` in the compose file.
-* **`apache/hadoop:3` tag or its config keys changed:** check the image's page on Docker Hub. The `hadoop.env` key style (`CORE-SITE.XML\_...`) is the one the official image documents.
-* **Dockerfile fails at the Python install:** the base image's package manager may differ. Edit the `RUN` line in `docker/Dockerfile.hadoop-python`. If you cannot get Python in, skip the Streaming job and run the built-in example instead: `hadoop jar .../hadoop-mapreduce-examples-\*.jar wordcount <in> <out>`. The mechanics (map, shuffle, reduce) are the same.
-* **Hive cannot see HDFS data:** run `MSCK REPAIR TABLE fact\_usage;` again after the Spark job. Make sure the `LOCATION` paths match the folders under `hdfs://namenode:8020/telecom/marts/`.
-* **Spark job cannot write to HDFS (permissions):** `dfs.permissions.enabled=false` is set for the lab. If you changed it, create the folders with the right owner.
-* **Spark UI at :4040 is empty:** it exists only while a job is running.
-* **Local run out of memory:** use `ROWS=500000`, or set `export PYSPARK\_DRIVER\_MEMORY=4g`.
-
-## Repo layout
-
+```bash
+docker compose -f docker/docker-compose.yml ps
 ```
-docker/        compose file, Hadoop settings, Dockerfile (Hadoop + Python)
-generator/     synthetic data with injected defects and skew, plus ground-truth manifest
-jobs/spark/    common.py, transforms.py (pure, tested), clean\_cdr.py, build\_marts.py, dq\_checks.py
-jobs/mapreduce/ Hadoop Streaming mapper and reducer (calls and drop rate per tower)
-sql/hive/      external table DDL, views, analytical queries
-tests/         unit tests + end-to-end test against the generator's ground truth
-benchmarks/    experiment harness, results written to results.md / results.csv
-```
+
+### 8. Access the Web Interfaces
+
+Once the corresponding services are running and their ports are exposed:
+
+| Component | Local URL |
+|---|---|
+| HDFS NameNode | http://localhost:9870 |
+| YARN ResourceManager | http://localhost:8088 |
+| Spark Master | http://localhost:8080 |
+| Spark Application UI | http://localhost:4040 |
+
+The Spark Application UI is available while a Spark application is running.
+
+---
+
+## 14. Implementation Verification
+
+The following table distinguishes successfully executed components from functionality that has not yet been verified.
+
+| Component | Status |
+|---|---|
+| Synthetic CDR data generation | Verified |
+| 3.03M record processing | Verified |
+| Data reconciliation | Verified |
+| Spark cleaning and transformation | Executed against HDFS |
+| Dimensional data modelling | Verified |
+| Analytical data marts | Verified |
+| Automated data-quality checks | 12/12 passed |
+| HDFS NameNode | Verified |
+| HDFS DataNodes | Verified |
+| HDFS replication | Verified |
+| DataNode failure and recovery | Verified |
+| YARN ResourceManager | Verified |
+| YARN NodeManager | Verified |
+| Hadoop Streaming MapReduce | Successfully executed on YARN |
+| Spark standalone multi-worker execution | Pending verification |
+
+**Execution distinction:** Spark was executed in local mode (`local[2]`) inside the Docker environment against HDFS data. Hadoop Streaming MapReduce was separately submitted to YARN and completed successfully. A distributed multi-worker Spark execution has not yet been verified.
+
+---
+
+## 15. Production Architecture Mapping
+
+The technologies explored in this project have counterparts in modern cloud-based data engineering architectures.
+
+| Project Technology | Enterprise / Cloud Equivalent |
+|---|---|
+| Hadoop HDFS | Amazon S3, Azure Data Lake Storage Gen2, Google Cloud Storage |
+| YARN | Managed cluster resource orchestration |
+| Apache Spark | Databricks, Amazon EMR, Azure Synapse Spark |
+| Parquet | Common analytical storage format across cloud data lakes |
+| Hadoop MapReduce | Distributed batch processing workloads |
+| Docker | Containerised development and deployment environments |
+
+These are architectural comparisons rather than direct one-to-one replacements.
+
+The project provides a foundation for extending the architecture towards cloud-based data lakes and lakehouse platforms.
+
+---
+
+## 16. Future Improvements
+
+Potential extensions include:
+
+- Implementing Apache Airflow for workflow orchestration.
+- Deploying Spark jobs across multiple worker nodes.
+- Introducing Delta Lake or Apache Iceberg for transactional data processing.
+- Implementing incremental ingestion and merge operations.
+- Supporting late-arriving records.
+- Adding automated retries and failure recovery.
+- Implementing pipeline monitoring and alerting.
+- Integrating interactive BI dashboards.
+- Deploying the architecture on a managed cloud platform.
+- Extending network anomaly detection with machine learning.
+
+---
+
+## 17. Project Objective
+
+The objective of this project was to explore the engineering principles behind building reliable Big Data processing platforms.
+
+Rather than focusing solely on data transformations, the implementation covers the complete data lifecycle:
+
+**Generation → Ingestion → Distributed Storage → Processing → Data Quality → Dimensional Modelling → Analytics → Performance Optimisation**
+
+The project demonstrates practical experience with Hadoop distributed storage, YARN resource management, MapReduce execution, Spark-based data processing, fault tolerance, data modelling, and large-scale data quality engineering.
+
+It highlights the importance of building data pipelines that are not only capable of processing large datasets, but are also reliable, measurable, and maintainable.
+
+---
+
+**Author:** Thejaswini Sunil
+
+**Focus Areas:** Big Data Engineering · Distributed Systems · Data Pipelines · Data Quality · Data Modelling · Performance Engineering
+
+**Technologies:** Python · Hadoop · HDFS · YARN · Apache Spark · PySpark · MapReduce · Parquet · ORC · Docker · SQL · Pytest
 
