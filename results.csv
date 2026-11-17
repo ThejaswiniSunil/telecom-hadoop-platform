@@ -1,0 +1,12 @@
+experiment,variant,seconds,size_mb,files,note
+formats,csv,3.92,338.5,4,filter + group-by on 3 of 12 columns
+formats,parquet,0.75,100.4,4,filter + group-by on 3 of 12 columns
+formats,orc,0.47,96.2,4,filter + group-by on 3 of 12 columns
+pruning,unpartitioned,0.75,101.6,12,one-day filter (2026-09-01)
+pruning,partitioned by call_date,0.44,106.6,231,one-day filter (2026-09-01)
+small_files,1000 tiny files,3.47,122.5,1000,full-scan aggregation
+small_files,8 compacted files,1.25,108.1,8,full-scan aggregation
+skew,"sort-merge join, AQE off",5.74,,,hottest tower = 19.2% of rows
+skew,"sort-merge join, AQE skew handling",2.83,,,splits oversized partitions
+skew,broadcast join,0.86,,,small side sent to every executor: no shuffle of the big side
+skew,"salted join (K=8), AQE off",2.59,,,hot key spread over K partitions; dimension replicated K times

@@ -1,0 +1,9 @@
+# Hadoop image + Python 3, needed because Hadoop Streaming runs mapper.py / reducer.py INSIDE the
+# NodeManager containers. If your base image uses a different package manager, adjust the RUN line.
+FROM apache/hadoop:3
+USER root
+RUN (command -v dnf >/dev/null && dnf install -y python3) \
+ || (command -v yum >/dev/null && yum install -y python3) \
+ || (command -v apt-get >/dev/null && apt-get update && apt-get install -y python3) \
+ || (command -v microdnf >/dev/null && microdnf install -y python3)
+USER hadoop

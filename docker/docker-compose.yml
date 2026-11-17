@@ -1,0 +1,102 @@
+# Mini big-data platform on one machine (~8 GB RAM free recommended).
+#   HDFS: 1 NameNode + 2 DataNodes     YARN: ResourceManager + 1 NodeManager (MapReduce)
+#   Spark: standalone master + 2 workers (reads/writes HDFS)     Hive: HiveServer2 (embedded metastore)
+#
+# UIs:  NameNode http://localhost:9870   YARN http://localhost:8088   Spark master http://localhost:8080
+#       Spark app UI (while a job runs) http://localhost:4040      HiveServer2 UI http://localhost:10002
+#
+# NOTE: written for the official apache/hadoop, apache/spark and apache/hive images. See README
+# "Troubleshooting" if an image tag or a setting has changed since this file was written.
+
+x-hadoop: &hadoop
+  image: apache/hadoop:3
+  env_file: [./hadoop.env]
+  networks: [bigdata]
+
+services:
+  namenode:
+    <<: *hadoop
+    hostname: namenode
+    command: ["hdfs", "namenode"]
+    environment:
+      ENSURE_NAMENODE_DIR: "/tmp/hadoop-hadoop/dfs/name"
+    ports: ["9870:9870", "8020:8020"]
+    volumes:
+      - ../data:/data   # local files you can `hdfs dfs -put` into HDFS
+
+  datanode1:
+    <<: *hadoop
+    hostname: datanode1
+    command: ["hdfs", "datanode"]
+    depends_on: [namenode]
+
+  datanode2:
+    <<: *hadoop
+    hostname: datanode2
+    command: ["hdfs", "datanode"]
+    depends_on: [namenode]
+
+  datanode3:
+    <<: *hadoop
+    hostname: datanode3
+    command: ["hdfs", "datanode"]
+    depends_on: [namenode]
+
+  resourcemanager:
+    <<: *hadoop
+    hostname: resourcemanager
+    command: ["yarn", "resourcemanager"]
+    ports: ["8088:8088"]
+    depends_on: [namenode]
+
+  nodemanager:
+    build:
+      context: .
+      dockerfile: Dockerfile.hadoop-python
+    image: telecom-hadoop-python
+    env_file: [./hadoop.env]
+    networks: [bigdata]
+    hostname: nodemanager
+    command: ["yarn", "nodemanager"]
+    volumes: [../jobs/mapreduce:/opt/mr]
+    depends_on: [resourcemanager]
+
+  spark-master:
+    image: apache/spark:3.5.3-python3
+    hostname: spark-master
+    networks: [bigdata]
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    ports: ["8080:8080", "7077:7077", "4040:4040"]
+    volumes: [../jobs:/opt/jobs, ../benchmarks:/opt/benchmarks, ../data:/data]
+
+  spark-worker1:
+    image: apache/spark:3.5.3-python3
+    networks: [bigdata]
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "--cores", "2", "--memory", "2g"]
+    volumes: [../jobs:/opt/jobs]
+    depends_on: [spark-master]
+
+  spark-worker2:
+    image: apache/spark:3.5.3-python3
+    networks: [bigdata]
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "--cores", "2", "--memory", "2g"]
+    volumes: [../jobs:/opt/jobs]
+    depends_on: [spark-master]
+
+  hive:
+    image: apache/hive:4.0.0
+    hostname: hive
+    networks: [bigdata]
+    environment:
+      SERVICE_NAME: hiveserver2
+    ports: ["10000:10000", "10002:10002"]
+    volumes: [../sql/hive:/opt/sql]
+    depends_on: [namenode]
+
+networks:
+  bigdata: {}
+
+volumes:
+  nn-data: {}
+  dn1-data: {}
+  dn2-data: {}
